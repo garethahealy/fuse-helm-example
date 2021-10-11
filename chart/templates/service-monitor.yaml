@@ -1,0 +1,17 @@
+{{- if .Values.servicemonitor }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "ej-fuse.fullname" . }}
+  labels:
+    {{- include "ej-fuse.labels" . | nindent 4 }}
+spec:
+  endpoints:
+    - interval: 30s
+      port: tcp-8080
+      scheme: http
+  selector:
+    matchLabels:
+    {{- include "ej-fuse.labels" . | nindent 6 }}
+{{- end }}
