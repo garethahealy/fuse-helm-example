@@ -1,0 +1,50 @@
+pipeline {
+    agent { 
+        label 'maven'
+    }
+
+    environment {
+        PROJECT_NAME = 'helloworld'
+        APP_NAME    = 'helloworld'
+        PROD_REGISTRY    = 'TODO'
+        PROD_API    = 'TODO'
+    }
+
+    parameters { 
+        string(name: 'RELEASE_VERSION', description: 'Tag which has already been built/released on dev') 
+    }
+
+    stages {
+        stage('Git Clone') { 
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Mirror image to Prod') { 
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'production-cluster-registry', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    sh "oc registry login"
+                    sh "oc registry login --registry ${PROD_REGISTRY} --auth-basic=${USERNAME}:${PASSWORD}"
+                    sh "oc image mirror ${PROJECT_NAME}/${APP_NAME}:${params.RELEASE_VERSION} ${PROD_REGISTRY}/${PROJECT_NAME}/${APP_NAME}:${params.RELEASE_VERSION}"
+                }
+            }
+        }
+
+        stage('Deploy Runnable Resources') { 
+            steps {
+                withCredentials([string(credentialsId: 'prod-token', variable: 'TOKEN')]) {
+                    sh "oc process -f templates/run.yaml -p APP_NAME=${APP_NAME} -p JENKINS_BUILD_URL=${BUILD_URL} -p PROJECT_NAME=${PROJECT_NAME} -p IMAGE_TAG=${params.RELEASE_VERSION} --server=${PROD_API} --token=${TOKEN} | oc apply -f -n ${PROJECT_NAME} --server=${PROD_API} --token=${TOKEN}"
+                }
+            }
+        }
+
+        stage('Watch Deployment') { 
+            steps {
+                withCredentials([string(credentialsId: 'prod-token', variable: 'TOKEN')]) {
+                    sh "oc rollout status deployment/${APP_NAME} --watch=true -n ${PROJECT_NAME} --server=${PROD_API} --token=${TOKEN}"
+                }
+            }
+        }
+    }
+}

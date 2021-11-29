@@ -1,0 +1,166 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: run
+objects:
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: ${APP_NAME}
+    labels:
+      app.kubernetes.io/name: ${APP_NAME}
+  spec:
+    progressDeadlineSeconds: 600
+    replicas: ${{REPLICAS}}
+    revisionHistoryLimit: 10
+    selector:
+      matchLabels:
+        app.kubernetes.io/name: ${APP_NAME}
+    strategy:
+      rollingUpdate:
+        maxSurge: 25%
+        maxUnavailable: 25%
+      type: RollingUpdate
+    template:
+      metadata:
+        annotations:
+          prometheus.io/scrape: 'true'
+          prometheus.io/port: '9779'
+          jenkins/url: ${JENKINS_BUILD_URL}
+        labels:
+          app.kubernetes.io/name: ${APP_NAME}
+      spec:
+        containers:
+          - env:
+              - name: KUBERNETES_NAMESPACE
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.namespace
+              - name: JAVA_ARGS
+                value: '--spring.config.location=/app-config/application.properties'
+            image: ${IMAGE_REGISTRY}/${PROJECT_NAME}/${APP_NAME}:${IMAGE_TAG}
+            imagePullPolicy: Always
+            name: ${APP_NAME}
+            livenessProbe:
+              httpGet:
+                path: /actuator/health
+                port: 8080
+                scheme: HTTP
+              initialDelaySeconds: 30
+              timeoutSeconds: 5
+              periodSeconds: 15
+              successThreshold: 1
+              failureThreshold: 5
+            ports:
+              - name: http
+                containerPort: 8080
+                protocol: TCP
+              - name: prom
+                containerPort: 9779
+                protocol: TCP
+            readinessProbe:
+              httpGet:
+                path: /actuator/health
+                port: 8080
+                scheme: HTTP
+              initialDelaySeconds: 30
+              timeoutSeconds: 5
+              periodSeconds: 15
+              successThreshold: 1
+              failureThreshold: 5
+            resources:
+              limits:
+                memory: 1000Mi
+              requests:
+                cpu: '100m'
+                memory: 100Mi
+            volumeMounts:
+              - name: config-volume
+                mountPath: /app-config
+              - name: secret-volume
+                mountPath: /secret-config
+        volumes:
+          - name: config-volume
+            configMap:
+              name: ${APP_NAME}
+          - name: secret-volume
+            secret:
+              secretName: ${APP_NAME}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: ${APP_NAME}
+    labels:
+      app.kubernetes.io/name: ${APP_NAME}
+  spec:
+    ports:
+      - port: 8080
+        protocol: TCP
+        targetPort: 8080
+        name: tcp
+      - name: prometheus
+        port: 9779
+        protocol: TCP
+        targetPort: 9779
+      - name: jolokia
+        port: 8778
+        protocol: TCP
+        targetPort: 8778
+    selector:
+      app.kubernetes.io/name: ${APP_NAME}
+- apiVersion: policy/v1beta1
+  kind: PodDisruptionBudget
+  metadata:
+    name: ${APP_NAME}
+    labels:
+      app.kubernetes.io/name: ${APP_NAME}
+  spec:
+    minAvailable: 1
+    selector:
+      matchLabels:
+        app.kubernetes.io/name: ${APP_NAME}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: ${APP_NAME}
+  data:
+    application.properties: |-
+      server.port=8080
+      spring.application.name=fuse-helm-example
+
+      # disable all management enpoints except health
+      endpoints.enabled = false
+      endpoints.health.enabled = true
+      management.health.defaults.enabled=false
+
+      camel.springboot.main-run-controller = true
+
+      camel.health.enabled=false
+      camel.health.indicator.enabled=true
+
+      app-prop=from the configmap
+- kind: Secret
+  apiVersion: v1
+  metadata:
+    name: ${APP_NAME}
+  type: Opaque
+  data:
+    is_boolean: ZmFsc2U=
+parameters:
+- name: APP_NAME
+  required: true
+- name: REPLICAS
+  value: "2"
+  required: true
+- name: JENKINS_BUILD_URL
+  required: true
+- name: IMAGE_REGISTRY
+  value: "image-registry.openshift-image-registry.svc:5000"
+  required: true
+- name: PROJECT_NAME
+  value: "helloworld"
+  required: true
+- name: IMAGE_TAG
+  value: "latest"
+  required: true
+
